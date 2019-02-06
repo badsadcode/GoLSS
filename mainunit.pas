@@ -34,7 +34,6 @@ type
     public
       property CellState: TCellStates read FCellState write FCellState;
       property PrevCellState: TCellStates read FPrevCellState write FPrevCellState;
-
       property CRect: TRect read FCRect write FCRect;
 
 
@@ -50,6 +49,7 @@ type
   TForm1 = class(TForm)
     Bevel1: TBevel;
     Bevel2: TBevel;
+    Bevel3: TBevel;
     edBirthChance: TEdit;
     edCellHeight: TEdit;
     Edit1: TEdit;
@@ -69,18 +69,25 @@ type
     Label7: TLabel;
     lbSimulationSpeed: TLabel;
     Label6: TLabel;
+    dgLoadWorld: TOpenDialog;
     pbScene: TPaintBox;
+    dgSaveWorld: TSaveDialog;
     sbSystemInfo: TStatusBar;
     sbWorldContainer: TScrollBox;
     btnGenSeed: TSpeedButton;
     SpeedButton1: TSpeedButton;
     SpeedButton2: TSpeedButton;
+    btnSaveWorld: TSpeedButton;
+    btnLoadWorld: TSpeedButton;
+    SpeedButton3: TSpeedButton;
     tbWorldSpeed: TTrackBar;
     tbBirthChance: TTrackBar;
     tbtnSimulationONOFF: TToggleBox;
     tWorldClock: TTimer;
 
     procedure btnGenSeedClick(Sender: TObject);
+    procedure btnLoadWorldClick(Sender: TObject);
+    procedure btnSaveWorldClick(Sender: TObject);
     procedure edBirthChanceChange(Sender: TObject);
     procedure edCellHeightChange(Sender: TObject);
     procedure edCellHeightExit(Sender: TObject);
@@ -99,6 +106,7 @@ type
       Shift: TShiftState; X, Y: Integer);
     procedure SpeedButton1Click(Sender: TObject);
     procedure SpeedButton2Click(Sender: TObject);
+    procedure SpeedButton3Click(Sender: TObject);
     procedure tbBirthChanceChange(Sender: TObject);
     procedure tbWorldSpeedChange(Sender: TObject);
     procedure tbtnSimulationONOFFChange(Sender: TObject);
@@ -116,8 +124,14 @@ type
 
     function GetNeighboursCount(AWorld: TWorld; ARow, ACol, AWorldWidth,
       AWorldHeight: integer): integer;
+    function CellState2String(ACell: TCell): string;
+    function String2CellState(AString: string): TCellStates;
     function GetCellColor(ACell: TCell):TColor;
-    function SetCellColorMOD(ACell: TCell; ANeighbours: integer): TColor;
+    function SetCellColorMOD(ABaseColor: TColor; ANeighborsCount: Integer): TColor;
+    function DarkenColor(AColor: TColor; APercent: UInt8): TColor;
+    procedure Split(const Delimiter: Char; Input: string;
+      const Strings: TStrings);
+
   public
 
   end;
@@ -141,6 +155,14 @@ implementation
 {$R *.lfm}
 
 { TForm1 }
+procedure TForm1.Split (const Delimiter: Char; Input: string; const Strings: TStrings);
+begin
+   Assert(Assigned(Strings)) ;
+   Strings.Clear;
+   Strings.Delimiter := Delimiter;
+   Strings.StrictDelimiter:=true;
+   Strings.DelimitedText := Input;
+end;
 
 procedure TForm1.tbWorldSpeedChange(Sender: TObject);
 begin
@@ -191,7 +213,9 @@ end;
 
 procedure TForm1.tWorldClockTimer(Sender: TObject);
 var
-  cY, cX, ns: Integer;
+  ins,cY, cX, ns, sHeight, sWidth: Integer;
+  bit, Bitmap:TBitmap;
+  Dest, Source: TRect;
 begin
   // Edit1.text:=IntToStr(Length(World))+' <CURR - OLD> '+inttostr(length(oldworld));
   // SetWorldState(OldWorld,csDead,WorldWidth,WorldHeight);
@@ -202,7 +226,7 @@ begin
  begin
    For cX:=0 to WorldWidth-1 do
    begin
-   if World[cx,cy].CellState=csAlive then
+ if World[cx,cy].CellState=csAlive then
      begin
        World[cX,cY].PrevCellState := World[cX,cY].CellState;
        ns:=GetNeighboursCount(World,cX,cY,WorldWidth,WorldHeight);
@@ -221,6 +245,7 @@ begin
        ns:=GetNeighboursCount(World,cX,cY,WorldWidth,WorldHeight);
        if ns=3 then oldWorld[cx,cy].CellState:=csAlive;
      end;
+
    end;
  end;
  SetWorldState(World,csDead,WorldWidth,WorldHeight);
@@ -234,16 +259,20 @@ begin
 
 
 
-
  pbScene.OnPaint:=@DrawWorld;
  pbScene.Refresh;
+
+
+
 
 end;
 
 procedure TForm1.DrawWorld(Sender: TObject);
 var
-  wRow,wCol:integer;
+  ins,wRow,wCol, sWidth, sHeight:integer;
   cellColor: TColor;
+  bit, Bitmap: TBitmap;
+  Dest, Source: TRect;
 begin
  pbScene.Canvas.pen.style:=psClear;
  pbScene.Canvas.Brush.Color:=rgbtocolor(23,23,23);
@@ -252,8 +281,9 @@ begin
   for wRow := 0 to WorldWidth-1 do begin
 
   if (World[wRow,wCol].PrevCellState <> World[wRow,wCol].CellState) or (World[wRow,wCol].CellState=csAlive) then begin
-      cellColor := SetCellColorMOD(World[wRow,wCol],GetNeighboursCount(World,wRow,wCol,WorldWidth,WorldHeight));// toso GetCellColor(World[wRow,wCol]);
-      if World[wRow,wCol].CellState=csAlive then begin
+      cellColor := SetCellColorMOD(RGBToColor(255,150,30),GetNeighboursCount(World,wRow,wCol,WorldWidth,WorldHeight));// toso GetCellColor(World[wRow,wCol]);
+
+     if World[wRow,wCol].CellState=csAlive then begin
       pbScene.Canvas.Brush.Color :=cellColor; // BIG FRAME RATE DROP :P RGBToColor(Random(256),Random(256),Random(256));
       pbScene.Canvas.Rectangle(World[wRow,wCol].CRect);
       end;
@@ -261,6 +291,7 @@ begin
   end;
 
  end;
+
 
 
 
@@ -350,7 +381,27 @@ begin
 
 end;
 
-function TForm1.SetCellColorMOD(ACell: TCell; ANeighbours: integer): TColor;
+function TForm1.DarkenColor(AColor: TColor; APercent: UInt8): TColor;
+var
+  R, G, B: UInt8;
+begin
+  RedGreenBlue(AColor, R, G, B);
+
+  R := Round(R * (100 - APercent) / 100);
+  G := Round(G * (100 - APercent) / 100);
+  B := Round(B * (100 - APercent) / 100);
+
+  Result := RGBToColor(R, G, B);
+
+end;
+
+function TForm1.SetCellColorMOD(ABaseColor: TColor; ANeighborsCount: Integer): TColor;
+begin
+  Result := DarkenColor(ABaseColor, ANeighborsCount * 10);
+end;
+
+
+{function TForm1.SetCellColorMOD(ACell: TCell; ANeighbours: integer): TColor;
 begin
     Case ANeighbours of
                0          : Result:=RGBToColor(255,255, 50);
@@ -365,7 +416,9 @@ begin
 
     end;
 
-end;
+end;  }
+
+
 
 procedure TForm1.ShiftCellState(ACell: TCell);
 begin
@@ -410,6 +463,25 @@ nc:=0;
      if ((ARow+1<=AWorldWidth-1) and (ACol+1<=AWorldHeight-1)) and ((AWorld[ARow+1,ACol+1].CellState=csAlive) or (AWorld[ARow+1,ACol+1].CellState=csAlive))then NC:=NC+1 else nc:=nc;
 
 result:=nc;
+
+end;
+
+function TForm1.CellState2String(ACell: TCell): string;
+begin
+   case ACell.CellState of
+        csAlive: Result := 'csAlive';
+        csDead: Result := 'csDead';
+   end;
+
+
+end;
+
+function TForm1.String2CellState(AString: string): TCellStates;
+begin
+  case AString of
+        'csAlive': Result := csAlive;
+        'csDead'  : Result := csDead;
+   end;
 
 end;
 
@@ -472,17 +544,22 @@ begin
   Begin
   if Length(World) > 0 then begin
      sbSystemInfo.Panels.Items[0].Text:=IntToStr(GetNeighboursCount(World,wRow,wCol,WorldWidth,WorldHeight));
+     sbSystemInfo.Panels.Items[1].Text:=CellState2String(World[wRow,wCol]);
      end;
 
   end;
    if mouseisdown then begin
    if (wRow>0) and (wCol<WorldHeight) then begin
-   if World[wRow,wCol].CellState<>csAlive then begin
+
+
+
+  if World[wRow,wCol].CellState<>csAlive then begin
   mx := x div cellwidth;
   my := y div cellheight;
   ShiftCellState(World[mx,my]);
 
-   end;
+
+  end;
   end;
 
    end;
@@ -566,6 +643,50 @@ begin
   //END CRUDE WAY
 end;
 
+procedure TForm1.SpeedButton3Click(Sender: TObject);
+
+  var
+  cY, cX, ns: Integer;
+begin
+   SetWorldState(OldWorld,csDead,WorldWidth,WorldHeight);
+  //Crude WAY!
+  For cY:=0 to WorldHeight-1 do
+ begin
+   For cX:=0 to WorldWidth-1 do
+   begin
+   if World[cx,cy].CellState=csDead then
+     begin
+       ns:=GetNeighboursCount(World,cX,cY,WorldWidth,WorldHeight);
+       World[cX,cY].PrevCellState := World[cX,cY].CellState;
+       if (ns=2) or (ns=3) then OldWorld[cx,cy].CellState:=csAlive;
+
+     end;
+   if World[cx,cy].CellState=csDead then
+     begin
+       World[cX,cY].PrevCellState := World[cX,cY].CellState;
+       ns:=GetNeighboursCount(World,cX,cY,WorldWidth,WorldHeight);
+       if (ns<2) or (ns>3) {(ns=0) or (ns=1) or (ns=5)or (ns=6)or (ns=7)or (ns=8)}  then OldWorld[cx,cy].CellState:=csDead;
+     end;
+
+   if World[cx,cy].CellState=csAlive then
+     begin
+       World[cX,cY].PrevCellState := World[cX,cY].CellState;
+       ns:=GetNeighboursCount(World,cX,cY,WorldWidth,WorldHeight);
+       if ns=3 then oldWorld[cx,cy].CellState:=csAlive;
+     end;
+   end;
+ end;
+ SetWorldState(World,csDead,WorldWidth,WorldHeight);
+ For cY:=0 to WorldHeight-1 do begin
+  For cX:=0 to WorldWidth-1 do begin
+    world[cx,cy].CellState:=Oldworld[cx,cy].CellState;
+    end;
+  end;
+ pbScene.OnPaint:=@DrawWorld;
+ pbScene.Refresh;
+  //END CRUDE WAY
+end;
+
 procedure TForm1.edBirthChanceChange(Sender: TObject);
 begin
   tbBirthChance.Position := StrToInt(edBirthChance.Text);
@@ -612,6 +733,95 @@ begin
   Randomize();
   WorldGenSeed  :=  Random(9223372036854775807);
   edWorldSeed.Text  :=  IntToStr(WorldGenSeed);
+end;
+
+procedure TForm1.btnLoadWorldClick(Sender: TObject);
+var
+  WorldList: TStringList;
+  wCol, wRow, i: Integer;
+  SetList: TStringList;
+  tmpCellState: TCellStates;
+  tmpRect: TRect;
+begin
+  if dgLoadWorld.Execute then
+    begin
+      if World<>nil then FreeWorld(World,WorldWidth,WorldHeight);
+      WorldList:=TStringList.Create;
+      //Load World file into WorldList(TStringList)
+      WorldList.LoadFromFile(dgLoadWorld.FileName);
+      //Create helping StringList to parse line for WorldWidth and World Height //always saved in first line of file
+      SetList:=TStringList.Create;
+      //Delimit first line by ';' and add results to helping stringlist SetList
+      Split(';',WorldList.Strings[0],SetList);
+      //Set loaded values to WorldWidth and Height and put then in Edit Boxes
+      WorldWidth:=StrToInt(SetList[0]);
+      WorldHeight:=StrToInt(SetList[1]);
+      edWorldWidth.Text:=IntToStr(WorldWidth);
+      edWorldHeight.Text:=IntToStr(WorldHeight);
+      //Prepare canvas with loaded values
+      PrepareWorldCanvas;
+      //Read info about cells and create them
+      SetLength(World,WorldWidth,WorldHeight);
+
+       SetLength(World,WorldWidth,WorldHeight);
+       SetLength(OldWorld,WorldWidth,WorldHeight);
+       GenerateWorld(OldWorld,WorldWidth,WorldHeight,CellWidth,CellHeight,wtEmpty);
+      SetList.Free;
+
+
+      For i := 1 to WorldList.Count-1 do
+      Begin
+          SetList := TStringList.Create; //reset helping list every step
+          Split(';',WorldList.Strings[i],SetList);
+          wRow:=StrToInt(SetList[0]);
+          wCol:=StrToInt(SetList[1]);
+          tmpCellState:=String2CellState(SetList[2]);
+          tmpRect := TRect.Create(wRow*CellWidth,wCol*CellHeight,wRow*CellWidth+CellWidth,wCol*CellHeight+CellHeight);
+          World[wRow,wCol]:=TCell.Create;
+          World[wRow,wCol].CellState:=tmpCellState;
+          World[wRow,wCol].PrevCellState:=tmpCellState;
+          World[wRow,wCol].CRect:=TRect.Create(tmpRect);
+          SetList.Free;
+      end;
+
+{       tmpRect := TRect.Create(wRow*ACellWidth-1,wCol*ACellHeight-1,wRow*ACellWidth+ACellWidth+1,wCol*ACellHeight+ACellHeight+1);
+
+                    AWorld[wRow,wCol] := TCell.Create;
+                    AWorld[wRow,wCol].CellState := csDead;
+                    AWorld[wRow,wCol].PrevCellState := AWorld[wRow,wCol].CellState;
+                    AWorld[wRow,wCol].CRect := TRect.Create(tmpRect);}
+
+
+
+
+
+
+    end;
+  WorldList.Free;
+  oldWWidth := WorldWidth;
+  oldWHeight := WorldHeight;
+  pbScene.OnPaint:=@DrawWorld;
+  pbScene.Invalidate;
+end;
+
+procedure TForm1.btnSaveWorldClick(Sender: TObject);
+var
+  WorldList: TStringList;
+  wCol, wRow: Integer;
+begin
+  if dgSaveWorld.Execute then
+    begin
+      WorldList:=TStringList.Create;
+      WorldList.Add(WorldWidth.ToString+';'+WorldHeight.ToString);
+      For wCol:=0 to WorldHeight-1 do begin
+          For wRow:=0 to WorldWidth-1 do begin
+                WorldList.Add(wRow.toString+';'+wCol.toString+';'+CellState2String(World[wRow,wCol]));
+          end;
+      end;
+      if dgSaveWorld.FileName<>'' then
+      WorldList.SaveToFile(dgSaveWorld.FileName);
+      WorldList.Free;
+    end;
 end;
 
 
